@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Cartoli Classic III</title>
+<style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#0d1b2a;}</style>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+import React, { useState, useEffect } from "react";
+
+// ── COURSE DATA ──────────────────────────────────────────────────────────────
+const HOLES = [
+  { hole:1,  par:5, hcp:13, yards:531 },
+  { hole:2,  par:4, hcp:15, yards:332 },
+  { hole:3,  par:3, hcp:7,  yards:174 },
+  { hole:4,  par:4, hcp:3,  yards:397 },
+  { hole:5,  par:5, hcp:9,  yards:552 },
+  { hole:6,  par:4, hcp:11, yards:356 },
+  { hole:7,  par:3, hcp:17, yards:159 },
+  { hole:8,  par:4, hcp:1,  yards:387 },
+  { hole:9,  par:4, hcp:5,  yards:405 },
+  { hole:10, par:4, hcp:6,  yards:404 },
+  { hole:11, par:4, hcp:10, yards:360 },
+  { hole:12, par:3, hcp:18, yards:145 },
+  { hole:13, par:4, hcp:8,  yards:346 },
+  { hole:14, par:3, hcp:16, yards:160 },
+  { hole:15, par:4, hcp:2,  yards:356 },
+  { hole:16, par:4, hcp:4,  yards:427 },
+  { hole:17, par:4, hcp:14, yards:387 },
+  { hole:18, par:5, hcp:12, yards:483 },
+];
+const TOTAL_PAR = HOLES.reduce((s,h) => s+h.par, 0);
+
+const STORAGE_KEY = "cartoli_classic_iii";
+const TEAMS_KEY   = "cartoli_teams";
+
+const DEFAULT_TEAMS = [
+  { id:1,  name:"Chris & Cenz",     players:"Chris & Cenz",     strokes:4, pin:"1111" },
+  { id:2,  name:"Mark & Hens",      players:"Mark & Hens",      strokes:4, pin:"2222" },
+  { id:3,  name:"Brendan & Frank",  players:"Brendan & Frank",  strokes:0, pin:"3333" },
+  { id:4,  name:"Eddy & Ace",       players:"Eddy & Ace",       strokes:1, pin:"4444" },
+  { id:5,  name:"Remy & Sher",      players:"Remy & Sher",      strokes:2, pin:"5555" },
+  { id:6,  name:"Pomps & Christian",players:"Pomps & Christian",strokes:1, pin:"6666" },
+  { id:7,  name:"Sawyer & Bill D",  players:"Sawyer & Bill D",  strokes:1, pin:"7777" },
+  { id:8,  name:"Nick & Coach",     players:"Nick & Coach",     strokes:2, pin:"8888" },
+  { id:9,  name:"Fillie & Mike",    players:"Fillie & Mike",    strokes:2, pin:"9999" },
+  { id:10, name:"Len & Trey",       players:"Len & Trey",       strokes:2, pin:"1010" },
+];
+
+function scoreColor(diff) {
+  if (diff === null || diff === undefined) return "#1a1a2e";
+  if (diff <= -2) return "#1565C0";
+  if (diff === -1) return "#c62828";
+  if (diff === 0)  return "#2e7d32";
+  if (diff === 1)  return "#4a4a4a";
+  return "#7b1fa2";
+}
+
+function scoreName(diff) {
+  if (diff === null || diff === undefined) return "";
+  if (diff <= -2) return "Eagle";
+  if (diff === -1) return "Birdie";
+  if (diff === 0)  return "Par";
+  if (diff === 1)  return "Bogey";
+  if (diff === 2)  return "Dbl Bogey";
+  return `+${diff}`;
+}
+
+function toPlusMinus(val) {
+  if (val === 0) return "E";
+  return val > 0 ? `+${val}` : `${val}`;
+}
+
+// ── STORAGE HELPERS (REST API) ───────────────────────────────────────────────
+const API = '/api/data';
+
+async function loadScores() {
+  try {
+    const r = await fetch(`${API}?key=${STORAGE_KEY}`);
+    const d = await r.json();
+    return d.value ? JSON.parse(d.value) : {};
+  } catch { return {}; }
+}
+
+async function saveScores(scores) {
+  try {
+    await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: STORAGE_KEY, value: JSON.stringify(scores) })
+    });
+  } catch(e) { console.error(e); }
+}
+
+async function loadTeams() {
+  try {
+    const r = await fetch(`${API}?key=${TEAMS_KEY}`);
+    const d = await r.json();
+    return d.value ? JSON.parse(d.value) : DEFAULT_TEAMS;
+  } catch { return DEFAULT_TEAMS; }
+}
+
+async function saveTeams(teams) {
+  try {
+    await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: TEAMS_KEY, value: JSON.stringify(teams) })
+    });
+  } catch(e) { console.error(e); }
+}
+
+// ── MAIN APP ─────────────────────────────────────────────────────────────────
+export default function App() {
+  const [view, setView]         = useState("home");   // home | setup | score | board | pin
+  const [teams, setTeams]       = useState(DEFAULT_TEAMS);
+  const [scores, setScores]     = useState({});        // { teamId: [null,null,...18] }
+  const [activeTeam, setActiveTeam] = useState(null);
+  const [loading, setLoading]   = useState(true);
+  const [saved, setSaved]       = useState(false);
+  const [pinError, setPinError] = useState(false);
+
+  // Keep a ref of latest scores so polling never overwrites unsaved local edits
+  const scoresRef = React.useRef({});
+
+  // Load on mount
+  useEffect(() => {
+    async function load() {
+      const [t, s] = await Promise.all([loadTeams(), loadScores()]);
+      setTeams(t);
+      setScores(s);
+      scoresRef.current = s;
+      setLoading(false);
+    }
+    load();
+    // Poll every 10s but only update OTHER teams, never the active team being scored
+    const interval = setInterval(async () => {
+      const [t, s] = await Promise.all([loadTeams(), loadScores()]);
+      setTeams(t);
+      // Merge: keep local scores for active team, use remote for everyone else
+      setScores(prev => {
+        const merged = { ...s };
+        // Preserve any team scores that are ahead of what storage has
+        Object.keys(prev).forEach(tid => {
+          const localFilled  = (prev[tid] || []).filter(v => v !== null).length;
+          const remoteFilled = (s[tid]   || []).filter(v => v !== null).length;
+          if (localFilled >= remoteFilled) merged[tid] = prev[tid];
+        });
+        scoresRef.current = merged;
+        return merged;
+      });
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getTeamScores = (teamId) => scores[teamId] || Array(18).fill(null);
+
+  const getTeamTotal = (teamId) => {
+    const s = getTeamScores(teamId);
+    return s.reduce((sum, v) => sum + (v !== null ? v : 0), 0);
+  };
+
+  const getTeamVsPar = (teamId) => {
+    const s = getTeamScores(teamId);
+    const played = s.filter(v => v !== null);
+    if (!played.length) return null;
+    const parPlayed = HOLES.filter((_,i) => s[i] !== null).reduce((sum,h) => sum+h.par, 0);
+    return getTeamTotal(teamId) - parPlayed;
+  };
+
+  const getTeamNetVsPar = (teamId) => {
+    const team = teams.find(t => t.id === teamId);
+    const strokes = team ? team.strokes : 0;
+    const gross = getTeamVsPar(teamId);
+    // Before any holes played, show starting net position (negative of strokes)
+    if (gross === null) return strokes > 0 ? -strokes : null;
+    return gross - strokes;
+  };
+
+  const getHolesPlayed = (teamId) => {
+    return getTeamScores(teamId).filter(v => v !== null).length;
+  };
+
+  const isComplete = (teamId) => getHolesPlayed(teamId) === 18;
+
+  const handleScoreChange = async (teamId, holeIdx, val) => {
+    const parsed = (val === null || val === "") ? null : Math.max(1, Math.min(12, parseInt(val) || 1));
+    // Use functional update so we always work off the latest state
+    setScores(prev => {
+      const updated = { ...prev };
+      if (!updated[teamId]) updated[teamId] = Array(18).fill(null);
+      updated[teamId] = [...updated[teamId]];
+      updated[teamId][holeIdx] = parsed;
+      scoresRef.current = updated;
+      // Fire save async without blocking state update
+      saveScores(updated).catch(console.error);
+      return updated;
+    });
+  };
+
+  const handleTeamSave = async (updatedTeams) => {
+    setTeams(updatedTeams);
+    await saveTeams(updatedTeams);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const rankedTeams = [...teams].sort((a, b) => {
+    const va = getTeamNetVsPar(a.id);
+    const vb = getTeamNetVsPar(b.id);
+    return (va ?? 0) - (vb ?? 0);
+  });
+
+  if (loading) return (
+    <div style={styles.center}>
+      <div style={styles.spinner} />
+      <p style={{color:"#fff", marginTop:16}}>Loading...</p>
+    </div>
+  );
+
+  // ── VIEWS ──────────────────────────────────────────────────────────────────
+  if (view === "home")   return <HomeView setView={setView} setActiveTeam={setActiveTeam} setPinError={setPinError} teams={teams} rankedTeams={rankedTeams} getTeamVsPar={getTeamVsPar} getTeamNetVsPar={getTeamNetVsPar} getHolesPlayed={getHolesPlayed} isComplete={isComplete} />;
+  if (view === "setup")  return <SetupView teams={teams} onSave={handleTeamSave} saved={saved} setView={setView} />;
+  if (view === "board")  return <LeaderboardView teams={rankedTeams} getTeamVsPar={getTeamVsPar} getTeamNetVsPar={getTeamNetVsPar} getTeamTotal={getTeamTotal} getHolesPlayed={getHolesPlayed} getTeamScores={getTeamScores} isComplete={isComplete} setView={setView} />;
+  if (view === "adminpin") return <PinView
+    team={{ name: "Admin Access", players: "Enter password to edit teams" }}
+    pinError={pinError}
+    onSubmit={(entered) => {
+      if (entered === "5511") { setPinError(false); setView("setup"); }
+      else { setPinError(true); }
+    }}
+    setView={setView}
+  />;
+  if (view === "pin")    return <PinView team={teams.find(t=>t.id===activeTeam)} pinError={pinError} onSubmit={(entered) => {
+    const team = teams.find(t=>t.id===activeTeam);
+    if (entered === team.pin) { setPinError(false); setView("score"); }
+    else { setPinError(true); }
+  }} setView={setView} />;
+  if (view === "score")  return <ScoringView team={teams.find(t=>t.id===activeTeam)} scores={getTeamScores(activeTeam)} onChange={(hi,v)=>handleScoreChange(activeTeam,hi,v)} setView={setView} />;
+  return null;
+}
+
+// ── HOME ─────────────────────────────────────────────────────────────────────
+function HomeView({ setView, setActiveTeam, setPinError, teams, rankedTeams, getTeamVsPar, getTeamNetVsPar, getHolesPlayed, isComplete }) {
+  return (
+    <div style={styles.page}>
+      <div style={styles.header}>
+        <div style={styles.headerAccent} />
+        <p style={styles.headerSub}>⛳ Official Scoring</p>
+        <h1 style={styles.headerTitle}>Cartoli Classic III</h1>
+        <p style={styles.headerSub2}>2-Person Scramble</p>
+      </div>
+
+      <div style={styles.body}>
+        {/* Quick leaderboard snapshot */}
+        <div style={styles.snapshotCard}>
+          <p style={styles.sectionLabel}>🏆 LEADERBOARD</p>
+          {rankedTeams.map((team, i) => {
+            const vp = getTeamVsPar(team.id);
+            const hp = getHolesPlayed(team.id);
+            return (
+              <div key={team.id} style={styles.snapshotRow}>
+                <span style={styles.snapshotPos}>{hp > 0 ? i+1 : "—"}</span>
+                <span style={styles.snapshotName}>{team.name || `Team ${team.id}`}{isComplete(team.id) && <span style={{marginLeft:4, fontSize:11}}>✅</span>}</span>
+                <span style={{
+                  ...styles.snapshotScore,
+                  color: vp === null ? "#888" : vp < 0 ? "#e53935" : vp === 0 ? "#2e7d32" : "#555"
+                }}>
+                  {(() => { const n = getTeamNetVsPar(team.id); return n === null ? "E" : toPlusMinus(n); })()}
+                  {hp > 0 ? <span style={styles.snapshotHoles}> net thru {hp}</span> : <span style={styles.snapshotHoles}> to start</span>}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        <p style={styles.sectionLabel}>SELECT YOUR TEAM TO SCORE</p>
+        {teams.map(team => (
+          <button key={team.id} style={styles.teamBtn}
+            onClick={() => { setActiveTeam(team.id); setPinError(false); setView("pin"); }}>
+            <span style={styles.teamBtnName}>{team.name || `Team ${team.id}`}</span>
+            <span style={styles.teamBtnSub}>{team.players || "Tap to enter scores"}</span>
+            <span style={styles.teamBtnArrow}>›</span>
+          </button>
+        ))}
+
+        <div style={styles.actionRow}>
+          <button style={styles.outlineBtn} onClick={() => setView("board")}>Full Leaderboard</button>
+          <button style={styles.outlineBtn} onClick={() => setView("adminpin")}>⚙ Setup Teams</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── PIN ENTRY ────────────────────────────────────────────────────────────────
+function PinView({ team, pinError, onSubmit, setView }) {
+  const [entered, setEntered] = useState("");
+
+  const handleKey = (digit) => {
+    if (entered.length < 4) {
+      const next = entered + digit;
+      setEntered(next);
+      if (next.length === 4) {
+        setTimeout(() => onSubmit(next), 150);
+        setTimeout(() => setEntered(""), 400);
+      }
+    }
+  };
+
+  const handleClear = () => setEntered("");
+
+  return (
+    <div style={styles.page}>
+      <div style={{...styles.header, paddingBottom:20}}>
+        <div style={styles.headerAccent} />
+        <p style={styles.headerSub}>Enter Team PIN</p>
+        <h1 style={{...styles.headerTitle, fontSize:22}}>{team?.name || "Team"}</h1>
+        <p style={styles.headerSub2}>{team?.players || ""}</p>
+      </div>
+      <div style={{...styles.body, display:"flex", flexDirection:"column", alignItems:"center", paddingTop:32}}>
+        {/* PIN dots */}
+        <div style={{display:"flex", gap:16, marginBottom:12}}>
+          {[0,1,2,3].map(i => (
+            <div key={i} style={{
+              width:20, height:20, borderRadius:"50%",
+              background: i < entered.length ? "#C9A84C" : "#1e2a3a",
+              border: "2px solid " + (i < entered.length ? "#C9A84C" : "#2a3a50"),
+              transition:"all 0.15s"
+            }} />
+          ))}
+        </div>
+        {pinError && <p style={{color:"#e53935", fontSize:13, marginBottom:12, fontWeight:600}}>❌ Incorrect PIN — try again</p>}
+        {!pinError && <p style={{color:"#7fb3d3", fontSize:13, marginBottom:12}}>Enter your 4-digit team PIN</p>}
+
+        {/* Numpad */}
+        <div style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, width:220}}>
+          {[1,2,3,4,5,6,7,8,9].map(n => (
+            <button key={n} style={styles.pinBtn} onClick={() => handleKey(String(n))}>
+              {n}
+            </button>
+          ))}
+          <button style={{...styles.pinBtn, background:"transparent", border:"1px solid #2a3a50", color:"#e53935"}} onClick={handleClear}>✕</button>
+          <button style={styles.pinBtn} onClick={() => handleKey("0")}>0</button>
+          <div />
+        </div>
+
+        <button style={{...styles.ghostBtn, marginTop:24}} onClick={() => setView("home")}>← Back</button>
+      </div>
+    </div>
+  );
+}
+
+// ── SETUP ────────────────────────────────────────────────────────────────────
+function SetupView({ teams, onSave, saved, setView }) {
+  const [local, setLocal] = useState(teams.map(t => ({...t})));
+
+  const update = (id, field, val) => {
+    setLocal(prev => prev.map(t => t.id === id ? {...t, [field]: val} : t));
+  };
+
+  return (
+    <div style={styles.page}>
+      <div style={{...styles.header, paddingBottom:16}}>
+        <div style={styles.headerAccent} />
+        <h1 style={{...styles.headerTitle, fontSize:22}}>Team Setup</h1>
+      </div>
+      <div style={styles.body}>
+        {local.map(team => (
+          <div key={team.id} style={styles.setupCard}>
+            <p style={styles.setupCardTitle}>Team {team.id}</p>
+            <input style={styles.input} placeholder="Team Name (e.g. The Eagles)"
+              value={team.name} onChange={e => update(team.id, "name", e.target.value)} />
+            <input style={styles.input} placeholder="Player 1 & Player 2 names"
+              value={team.players} onChange={e => update(team.id, "players", e.target.value)} />
+            <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:8}}>
+              <span style={{color:"#ccc", fontSize:13, flex:1}}>Handicap Strokes:</span>
+              <input style={{...styles.input, width:60, textAlign:"center", marginBottom:0}}
+                type="number" min={0} max={36} placeholder="0"
+                value={team.strokes} onChange={e => update(team.id, "strokes", parseInt(e.target.value)||0)} />
+            </div>
+            <div style={{display:"flex", alignItems:"center", gap:10}}>
+              <span style={{color:"#ccc", fontSize:13, flex:1}}>Team PIN:</span>
+              <div style={{background:"#0d1b2a", border:"1px solid #C9A84C", borderRadius:8, padding:"8px 16px", color:"#C9A84C", fontWeight:700, fontSize:18, letterSpacing:6}}>{team.pin}</div>
+            </div>
+          </div>
+        ))}
+        <button style={styles.primaryBtn} onClick={() => onSave(local)}>
+          {saved ? "✓ Saved!" : "Save Teams"}
+        </button>
+        <button style={styles.ghostBtn} onClick={() => setView("home")}>← Back</button>
+      </div>
+    </div>
+  );
+}
+
+// ── SCORING ──────────────────────────────────────────────────────────────────
+function ScoringView({ team, scores, onChange, setView }) {
+  const [activeHole, setActiveHole] = useState(
+    scores.findIndex(v => v === null) !== -1
+      ? scores.findIndex(v => v === null)
+      : 0
+  );
+
+  if (!team) return <div style={styles.center}><p style={{color:"#fff"}}>Team not found.</p></div>;
+
+  const strokeHoles = [];
+  const sorted = [...HOLES].sort((a,b) => a.hcp - b.hcp);
+  for (let i = 0; i < Math.min(team.strokes, 18); i++) strokeHoles.push(sorted[i].hole);
+
+  const totalStrokes = scores.reduce((s,v) => s + (v||0), 0);
+  const holesPlayed  = scores.filter(v => v !== null).length;
+  const parPlayed    = HOLES.filter((_,i) => scores[i] !== null).reduce((s,h)=>s+h.par,0);
+  const vsPar        = holesPlayed ? totalStrokes - parPlayed : null;
+
+  const hole  = HOLES[activeHole];
+  const score = scores[activeHole];
+  const diff  = score !== null && score !== undefined ? score - hole.par : null;
+  const hasStroke = strokeHoles.includes(hole.hole);
+
+  return (
+    <div style={styles.page}>
+      <div style={{...styles.header, paddingBottom:12}}>
+        <div style={styles.headerAccent} />
+        <p style={styles.headerSub}>{team.name}</p>
+        <h1 style={{...styles.headerTitle, fontSize:20}}>{team.players || "Enter Scores"}</h1>
+        <div style={styles.statRow}>
+          <div style={styles.stat}><span style={styles.statVal}>{holesPlayed}</span><span style={styles.statLbl}>Holes</span></div>
+          <div style={styles.stat}><span style={{...styles.statVal, color: vsPar < 0 ? "#ff6b6b" : vsPar > 0 ? "#aaa" : "#69db7c"}}>{vsPar === null ? "—" : toPlusMinus(vsPar)}</span><span style={styles.statLbl}>vs Par</span></div>
+          <div style={styles.stat}><span style={styles.statVal}>{totalStrokes || "—"}</span><span style={styles.statLbl}>Gross</span></div>
+        </div>
+      </div>
+
+      <div style={styles.body}>
+        {/* Hole selector */}
+        <div style={styles.holeScroll}>
+          {HOLES.map((h, i) => {
+            const s = scores[i];
+            const d = s !== null && s !== undefined ? s - h.par : null;
+            const isStroke = strokeHoles.includes(h.hole);
+            return (
+              <button key={i} style={{
+                ...styles.holePip,
+                background: i === activeHole ? "#C9A84C" : s !== null ? scoreColor(d) : "#1e2a3a",
+                border: isStroke ? "2px solid #C9A84C" : "2px solid transparent",
+                fontWeight: i === activeHole ? "bold" : "normal",
+              }} onClick={() => setActiveHole(i)}>
+                {h.hole}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Active hole card */}
+        <div style={styles.holeCard}>
+          <div style={styles.holeCardTop}>
+            <div>
+              <p style={styles.holeNum}>HOLE {hole.hole}</p>
+              <p style={styles.holeInfo}>Par {hole.par} · {hole.yards} yds · HCP {hole.hcp}</p>
+              {hasStroke && <p style={styles.strokeBadge}>⭕ STROKE HOLE</p>}
+            </div>
+            {score !== null && (
+              <div style={{textAlign:"right"}}>
+                <p style={{...styles.scoreBig, color: scoreColor(diff)}}>{score}</p>
+                <p style={{...styles.scoreName, color: scoreColor(diff)}}>{scoreName(diff)}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Score buttons */}
+          <div style={styles.scoreGrid}>
+            {[1,2,3,4,5,6,7,8,9,10].map(n => {
+              const d = n - hole.par;
+              const isSelected = score === n;
+              return (
+                <button key={n} style={{
+                  ...styles.scoreBtn,
+                  background: isSelected ? scoreColor(d) : "#1e2a3a",
+                  border: isSelected ? `2px solid ${scoreColor(d)}` : "2px solid #2a3a50",
+                  transform: isSelected ? "scale(1.08)" : "scale(1)",
+                }} onClick={() => {
+                  // Tap same score again to deselect/clear it
+                  if (isSelected) onChange(activeHole, null);
+                  else onChange(activeHole, n);
+                }}>
+                  <span style={styles.scoreBtnNum}>{n}</span>
+                  <span style={styles.scoreBtnLbl}>{scoreName(d)}</span>
+                </button>
+              );
+            })}
+          </div>
+          {/* Clear button — only shows if a score is entered */}
+          {score !== null && (
+            <button style={styles.clearBtn} onClick={() => onChange(activeHole, null)}>
+              ✕ Clear Hole {hole.hole}
+            </button>
+          )}
+
+          <div style={styles.holeNav}>
+            <button style={styles.navBtn} onClick={() => setActiveHole(Math.max(0, activeHole-1))}
+              disabled={activeHole === 0}>‹ Prev</button>
+            <button style={styles.navBtn} onClick={() => setActiveHole(Math.min(17, activeHole+1))}
+              disabled={activeHole === 17}>Next ›</button>
+          </div>
+        </div>
+
+        {/* Mini scorecard */}
+        <p style={styles.sectionLabel}>SCORECARD</p>
+        {[0,1].map(half => {
+          const holeSet = half === 0 ? HOLES.slice(0,9) : HOLES.slice(9,18);
+          const halfScores = half === 0 ? scores.slice(0,9) : scores.slice(9,18);
+          const halfTotal = halfScores.reduce((s,v) => s+(v||0), 0);
+          const halfPar   = holeSet.reduce((s,h) => s+h.par, 0);
+          return (
+            <div key={half} style={styles.miniCard}>
+              <div style={styles.miniRow}>
+                <span style={styles.miniLabel}>Hole</span>
+                {holeSet.map(h => <span key={h.hole} style={{
+                  ...styles.miniCell,
+                  background: strokeHoles.includes(h.hole) ? "#1a2a1a" : "transparent",
+                  borderRadius:4,
+                }}>{h.hole}{strokeHoles.includes(h.hole)?"*":""}</span>)}
+                <span style={{...styles.miniCell, fontWeight:"bold"}}>{half===0?"OUT":"IN"}</span>
+              </div>
+              <div style={styles.miniRow}>
+                <span style={styles.miniLabel}>Par</span>
+                {holeSet.map(h => <span key={h.hole} style={styles.miniCell}>{h.par}</span>)}
+                <span style={{...styles.miniCell, fontWeight:"bold"}}>{halfPar}</span>
+              </div>
+              <div style={styles.miniRow}>
+                <span style={styles.miniLabel}>Score</span>
+                {halfScores.map((s, i) => {
+                  const d = s !== null ? s - holeSet[i].par : null;
+                  return (
+                    <span key={i} style={{
+                      ...styles.miniCell,
+                      color: d !== null ? scoreColor(d) : "#555",
+                      fontWeight: "bold",
+                      background: d !== null ? `${scoreColor(d)}22` : "transparent",
+                      borderRadius: 3,
+                    }}>{s !== null ? s : "·"}</span>
+                  );
+                })}
+                <span style={{...styles.miniCell, fontWeight:"bold", color: halfTotal ? "#fff":"#555"}}>{halfTotal||"—"}</span>
+              </div>
+            </div>
+          );
+        })}
+
+        <button style={styles.ghostBtn} onClick={() => setView("home")}>← Back to Home</button>
+      </div>
+    </div>
+  );
+}
+
+// ── LEADERBOARD ───────────────────────────────────────────────────────────────
+function LeaderboardView({ teams, getTeamVsPar, getTeamNetVsPar, getTeamTotal, getHolesPlayed, getTeamScores, isComplete, setView }) {
+  const medals = ["🥇","🥈","🥉"];
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.header}>
+        <div style={styles.headerAccent} />
+        <p style={styles.headerSub}>⛳ Live Standings</p>
+        <h1 style={styles.headerTitle}>Cartoli Classic III</h1>
+        <p style={{...styles.headerSub2, fontSize:11, opacity:0.6}}>Updates every 8 seconds</p>
+      </div>
+
+      <div style={styles.body}>
+        {teams.map((team, i) => {
+          const vp  = getTeamVsPar(team.id);
+          const net = getTeamNetVsPar(team.id);
+          const hp  = getHolesPlayed(team.id);
+          const gross = getTeamTotal(team.id);
+          const scores = getTeamScores(team.id);
+          const hasStarted = hp > 0;
+
+          return (
+            <div key={team.id} style={{
+              ...styles.boardCard,
+              border: i === 0 && hasStarted ? "1.5px solid #C9A84C" : "1.5px solid #1e2a3a",
+            }}>
+              <div style={styles.boardTop}>
+                <div style={styles.boardLeft}>
+                  <span style={styles.boardPos}>{hasStarted ? (medals[i] || `${i+1}`) : "—"}</span>
+                  <div>
+                    <p style={styles.boardName}>{team.name || `Team ${team.id}`}{isComplete(team.id) && <span style={{marginLeft:6, fontSize:13}}>✅</span>}</p>
+                    <p style={styles.boardPlayers}>{team.players}</p>
+                  </div>
+                </div>
+                <div style={styles.boardRight}>
+                  <p style={{...styles.boardScore, color: net===null?"#aaa": net<0?"#e53935":net===0?"#2e7d32":"#aaa"}}>
+                    {net === null ? "E" : toPlusMinus(net)}
+                  </p>
+                  <p style={styles.boardThru}>
+                    {hasStarted ? `NET · thru ${hp}` : "Starting NET"}
+                    {hasStarted && vp !== null && <span style={{color:"#777", fontSize:10}}> (Gross {toPlusMinus(vp)})</span>}
+                  </p>
+                </div>
+              </div>
+
+              {isComplete(team.id) && (
+                <div style={{background:"#1a3a1a", borderRadius:6, padding:"5px 10px", marginTop:8, textAlign:"center"}}>
+                  <span style={{color:"#69db7c", fontSize:11, fontWeight:700, letterSpacing:1}}>✅ ROUND COMPLETE — FINAL SCORE</span>
+                </div>
+              )}
+              {hasStarted && (
+                <div style={styles.boardMiniRow}>
+                  {scores.map((s, idx) => {
+                    const d = s !== null ? s - HOLES[idx].par : null;
+                    return (
+                      <div key={idx} style={{
+                        ...styles.boardDot,
+                        background: s !== null ? scoreColor(d) : "#1e2a3a",
+                        opacity: s !== null ? 1 : 0.3,
+                      }} title={`Hole ${idx+1}: ${s ?? "—"}`} />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <div style={{...styles.actionRow, marginTop:8}}>
+          <button style={styles.outlineBtn} onClick={() => setView("home")}>← Home</button>
+          <button style={styles.outlineBtn} onClick={() => window.location.reload()}>↻ Refresh</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── STYLES ────────────────────────────────────────────────────────────────────
+const styles = {
+  page: { minHeight:"100vh", background:"#0d1b2a", fontFamily:"system-ui,sans-serif", paddingBottom:32 },
+  center: { display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:"#0d1b2a" },
+  spinner: { width:36, height:36, border:"3px solid #1e2a3a", borderTop:"3px solid #C9A84C", borderRadius:"50%", animation:"spin 1s linear infinite" },
+
+  header: { background:"linear-gradient(160deg, #0B2545 0%, #1A4F7A 100%)", padding:"24px 20px 20px", textAlign:"center", position:"relative", overflow:"hidden" },
+  headerAccent: { position:"absolute", top:0, left:0, right:0, height:3, background:"linear-gradient(90deg,#C9A84C,#F0C040,#C9A84C)" },
+  headerSub:  { color:"#AED6F1", fontSize:12, margin:"0 0 4px", letterSpacing:2, textTransform:"uppercase" },
+  headerTitle:{ color:"#fff", fontSize:26, margin:"0 0 4px", fontWeight:700, letterSpacing:-0.5 },
+  headerSub2: { color:"#7fb3d3", fontSize:12, margin:0 },
+
+  statRow: { display:"flex", justifyContent:"center", gap:24, marginTop:12 },
+  stat:    { textAlign:"center" },
+  statVal: { display:"block", color:"#fff", fontSize:20, fontWeight:700 },
+  statLbl: { color:"#7fb3d3", fontSize:10, textTransform:"uppercase", letterSpacing:1 },
+
+  body: { padding:"16px 14px" },
+  sectionLabel: { color:"#C9A84C", fontSize:10, fontWeight:700, letterSpacing:2, textTransform:"uppercase", marginBottom:8, marginTop:16 },
+
+  snapshotCard: { background:"#111d2b", borderRadius:12, padding:"12px 14px", marginBottom:6, border:"1px solid #1e2a3a" },
+  snapshotRow:  { display:"flex", alignItems:"center", paddingTop:7, paddingBottom:7, borderBottom:"1px solid #1a2535" },
+  snapshotPos:  { width:24, color:"#C9A84C", fontWeight:700, fontSize:14 },
+  snapshotName: { flex:1, color:"#fff", fontSize:14, fontWeight:600 },
+  snapshotScore:{ fontWeight:700, fontSize:15 },
+  snapshotHoles:{ fontSize:10, fontWeight:400, color:"#7fb3d3" },
+
+  teamBtn: { width:"100%", background:"#111d2b", border:"1px solid #1e2a3a", borderRadius:12, padding:"14px 16px", display:"flex", alignItems:"center", cursor:"pointer", marginBottom:8, textAlign:"left" },
+  teamBtnName: { color:"#fff", fontWeight:700, fontSize:15, flex:1 },
+  teamBtnSub:  { color:"#7fb3d3", fontSize:11, flex:2, textAlign:"left", paddingLeft:8 },
+  teamBtnArrow:{ color:"#C9A84C", fontSize:22, fontWeight:300 },
+
+  actionRow: { display:"flex", gap:10, marginTop:16 },
+  outlineBtn: { flex:1, background:"transparent", border:"1.5px solid #1e3a5a", borderRadius:10, padding:"11px 0", color:"#AED6F1", fontSize:13, fontWeight:600, cursor:"pointer" },
+  primaryBtn: { width:"100%", background:"linear-gradient(135deg,#C9A84C,#F0C040)", border:"none", borderRadius:12, padding:"15px", color:"#0d1b2a", fontSize:16, fontWeight:700, cursor:"pointer", marginBottom:10 },
+  ghostBtn:   { width:"100%", background:"transparent", border:"none", color:"#7fb3d3", fontSize:13, padding:"12px", cursor:"pointer" },
+
+  setupCard:      { background:"#111d2b", border:"1px solid #1e2a3a", borderRadius:12, padding:"14px", marginBottom:10 },
+  setupCardTitle: { color:"#C9A84C", fontWeight:700, fontSize:12, letterSpacing:1, textTransform:"uppercase", marginBottom:8, margin:"0 0 8px" },
+  input: { width:"100%", background:"#0d1b2a", border:"1px solid #2a3a50", borderRadius:8, padding:"10px 12px", color:"#fff", fontSize:14, marginBottom:8, boxSizing:"border-box" },
+
+  holeScroll: { display:"flex", gap:5, flexWrap:"wrap", justifyContent:"center", marginBottom:14 },
+  holePip: { width:32, height:32, borderRadius:6, cursor:"pointer", fontSize:11, fontWeight:700, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.15s" },
+
+  holeCard:    { background:"#111d2b", borderRadius:14, padding:"16px", marginBottom:14, border:"1px solid #1e2a3a" },
+  holeCardTop: { display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 },
+  holeNum:     { color:"#C9A84C", fontWeight:700, fontSize:11, letterSpacing:2, textTransform:"uppercase", margin:"0 0 2px" },
+  holeInfo:    { color:"#fff", fontSize:15, fontWeight:600, margin:"0 0 4px" },
+  strokeBadge: { color:"#C9A84C", fontSize:11, fontWeight:700, margin:0 },
+  scoreBig:    { fontSize:36, fontWeight:800, margin:0, lineHeight:1 },
+  scoreName:   { fontSize:11, fontWeight:600, margin:0, textTransform:"uppercase", letterSpacing:1 },
+
+  scoreGrid: { display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:7, marginBottom:14 },
+  scoreBtn:  { borderRadius:10, padding:"10px 4px", cursor:"pointer", transition:"all 0.1s", display:"flex", flexDirection:"column", alignItems:"center" },
+  scoreBtnNum: { color:"#fff", fontSize:18, fontWeight:700, lineHeight:1 },
+  scoreBtnLbl: { color:"#aaa", fontSize:8, textTransform:"uppercase", letterSpacing:0.5, marginTop:2 },
+
+  holeNav: { display:"flex", gap:10 },
+  navBtn:  { flex:1, background:"#0d1b2a", border:"1px solid #2a3a50", borderRadius:8, padding:"9px", color:"#AED6F1", fontSize:14, cursor:"pointer" },
+
+  miniCard: { background:"#111d2b", borderRadius:10, padding:"10px", marginBottom:8, border:"1px solid #1e2a3a", overflowX:"auto" },
+  miniRow:  { display:"flex", alignItems:"center", paddingTop:4, paddingBottom:4 },
+  miniLabel:{ color:"#7fb3d3", fontSize:10, fontWeight:700, width:36, flexShrink:0 },
+  miniCell: { flex:1, textAlign:"center", color:"#ccc", fontSize:10, minWidth:20 },
+
+  boardCard:  { background:"#111d2b", borderRadius:12, padding:"14px", marginBottom:8 },
+  boardTop:   { display:"flex", justifyContent:"space-between", alignItems:"center" },
+  boardLeft:  { display:"flex", alignItems:"center", gap:12 },
+  boardPos:   { fontSize:22, width:32, textAlign:"center" },
+  boardName:  { color:"#fff", fontWeight:700, fontSize:15, margin:"0 0 2px" },
+  boardPlayers:{ color:"#7fb3d3", fontSize:11, margin:0 },
+  boardRight: { textAlign:"right" },
+  boardScore: { fontSize:28, fontWeight:800, margin:0, lineHeight:1 },
+  boardThru:  { color:"#7fb3d3", fontSize:11, margin:0 },
+  boardMiniRow:{ display:"flex", gap:3, marginTop:10, flexWrap:"wrap" },
+  boardDot:   { width:14, height:14, borderRadius:3 },
+  pinBtn: { background:"#111d2b", border:"1px solid #1e2a3a", borderRadius:12, padding:"16px", color:"#fff", fontSize:22, fontWeight:700, cursor:"pointer", textAlign:"center" },
+  clearBtn: { width:"100%", background:"transparent", border:"1.5px solid #e53935", borderRadius:8, padding:"9px", color:"#e53935", fontSize:13, fontWeight:600, cursor:"pointer", marginBottom:10 },
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
